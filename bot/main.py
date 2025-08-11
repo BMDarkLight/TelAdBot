@@ -12,7 +12,6 @@ from telegram.ext import (
 )
 from enum import Enum
 
-# --- Environment Variable Loading ---
 env_path = find_dotenv()
 print(f"Loading .env from: {env_path}")
 load_dotenv(env_path)
@@ -25,14 +24,12 @@ PAYMENT_CARD_NUMBER = os.environ.get("PAYMENT_CARD_NUMBER")
 CHANNEL_ID = f"@{os.environ.get('CHANNEL_USERNAME')}"
 CHANNEL_LINK = f"https://t.me/{os.environ.get('CHANNEL_USERNAME')}"
 
-# --- Define Conversation States ---
 class ConversationState(Enum):
     AWAITING_RULES_AGREEMENT = 1
     AWAITING_AD_TYPE = 2
     AWAITING_AD_CONTENT = 3
     AWAITING_PAYMENT_RECEIPT = 4
 
-# --- Helper Functions ---
 async def show_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rules_text = """
 قوانین ثبت آگهی:
@@ -72,7 +69,6 @@ async def show_ad_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ConversationState.AWAITING_AD_TYPE
 
-# --- Main Conversation Handlers ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
@@ -132,12 +128,15 @@ async def receive_ad_content(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ad_id = message.message_id
     context.user_data['ad_id'] = ad_id
 
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
+    user_username = user.username
+
     if message.text:
-        context.bot_data[ad_id] = {'type': 'text', 'content': message.text, 'user_id': user_id}
+        context.bot_data[ad_id] = {'type': 'text', 'content': message.text, 'user_id': user_id, 'user_username': user_username}
     elif message.photo:
         photo_file_id = message.photo[-1].file_id
-        context.bot_data[ad_id] = {'type': 'photo', 'file_id': photo_file_id, 'content': message.caption, 'user_id': user_id}
+        context.bot_data[ad_id] = {'type': 'photo', 'file_id': photo_file_id, 'content': message.caption, 'user_id': user_id, 'user_username': user_username}
 
     price = "250,000 تومان"
     
@@ -181,11 +180,9 @@ ID: {user.id}
 نوع آگهی: {ad_type_display}
     """
     
-    # --- Create the Approval Button ---
     keyboard = [[InlineKeyboardButton("✅ Approve & Post Ad", callback_data=f"accept_{ad_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # --- Send to Admin ---
     await context.bot.send_message(chat_id=ADMIN_ID, text=admin_caption)
 
     ad_data = context.bot_data.get(ad_id, {})
@@ -227,8 +224,15 @@ async def approve_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ آگهی منقضی شده یا یافت نشد.")
         return
 
-    user_id = ad_data.get('user_id', 'N/A')
-    signature = f"\n🆔 شناسه کاربر: {user_id}\n———————————————————\n{CHANNEL_ID}"
+    user_username = ad_data.get('user_username')
+    
+    if user_username:
+        user_identifier = f"@{user_username}"
+    else:
+        user_id = ad_data.get('user_id', 'N/A')
+        user_identifier = f"ID: {user_id}"
+
+    signature = f"\n\n🆔 {user_identifier}\n———————————————————\n{CHANNEL_ID}"
     
     try:
         if ad_data.get('type') == 'text':
@@ -240,16 +244,14 @@ async def approve_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_caption = original_caption + signature
             await context.bot.send_photo(chat_id=CHANNEL_ID, photo=ad_data.get('file_id'), caption=new_caption)
         
-        # --- Confirm Approval ---
         await query.edit_message_text("✅ آگهی با موفقیت در چنل منتشر شد.")
+        
         del context.bot_data[ad_id]
 
     except Exception as e:
         print(f"Error posting to channel: {e}")
         await query.edit_message_text(f"❌ خطا در انتشار آگهی: {e}")
 
-
-# --- Utility Handlers ---
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancels and ends the conversation."""
     await update.message.reply_text(
@@ -270,7 +272,6 @@ if __name__ == '__main__':
 
     app = Application.builder().token(TOKEN).build()
 
-    # --- Conversation Handler for Users ---
     ad_submission_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_command)],
         states={
