@@ -129,16 +129,15 @@ async def ad_type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_ad_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receives ad content and stores it for later approval."""
     message = update.message
-    # Use the message ID as a unique key to store this ad's data
     ad_id = message.message_id
     context.user_data['ad_id'] = ad_id
 
+    user_id = update.effective_user.id
     if message.text:
-        context.bot_data[ad_id] = {'type': 'text', 'content': message.text}
+        context.bot_data[ad_id] = {'type': 'text', 'content': message.text, 'user_id': user_id}
     elif message.photo:
-        # Store the file_id of the largest photo and its caption
         photo_file_id = message.photo[-1].file_id
-        context.bot_data[ad_id] = {'type': 'photo', 'file_id': photo_file_id, 'content': message.caption}
+        context.bot_data[ad_id] = {'type': 'photo', 'file_id': photo_file_id, 'content': message.caption, 'user_id': user_id}
 
     price = "250,000 تومان"
     
@@ -187,17 +186,14 @@ ID: {user.id}
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     # --- Send to Admin ---
-    # 1. Send the user and ad info
     await context.bot.send_message(chat_id=ADMIN_ID, text=admin_caption)
 
-    # 2. Send the ad content for review (using the stored data)
     ad_data = context.bot_data.get(ad_id, {})
     if ad_data.get('type') == 'text':
         await context.bot.send_message(chat_id=ADMIN_ID, text=f"--- متن آگهی 👇 ---\n{ad_data.get('content')}")
     elif ad_data.get('type') == 'photo':
         await context.bot.send_photo(chat_id=ADMIN_ID, photo=ad_data.get('file_id'), caption=f"--- متن آگهی 👇 ---\n{ad_data.get('content', '')}")
 
-    # 3. Send the payment receipt
     await context.bot.send_message(chat_id=ADMIN_ID, text="--- رسید پرداخت 👇 ---")
     await context.bot.forward_message(
         chat_id=ADMIN_ID,
@@ -205,7 +201,6 @@ ID: {user.id}
         message_id=update.message.message_id
     )
 
-    # 4. Send the final message with the approval button
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text="لطفا آگهی را بررسی و در صورت تایید، آن را منتشر کنید.",
@@ -220,22 +215,20 @@ async def approve_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    # Extract the ad_id from the callback_data
     try:
         ad_id = int(query.data.split("_")[1])
     except (IndexError, ValueError):
         await query.edit_message_text("خطا: ID آگهی نامعتبر است.")
         return
 
-    # Retrieve the ad data from bot_data
     ad_data = context.bot_data.get(ad_id)
 
     if not ad_data:
         await query.edit_message_text("❌ آگهی منقضی شده یا یافت نشد.")
         return
 
-    # --- Post to Channel ---
-    signature = f"\n---------\n{CHANNEL_ID}"
+    user_id = ad_data.get('user_id', 'N/A')
+    signature = f"\n🆔 شناسه کاربر: {user_id}\n———————————————————\n{CHANNEL_ID}"
     
     try:
         if ad_data.get('type') == 'text':
@@ -249,7 +242,6 @@ async def approve_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # --- Confirm Approval ---
         await query.edit_message_text("✅ آگهی با موفقیت در چنل منتشر شد.")
-    
         del context.bot_data[ad_id]
 
     except Exception as e:
@@ -300,6 +292,7 @@ if __name__ == '__main__':
     )
 
     app.add_handler(ad_submission_handler)
+    
     app.add_handler(CallbackQueryHandler(approve_ad, pattern=r'^accept_'))
     
     app.add_error_handler(error_handler)
