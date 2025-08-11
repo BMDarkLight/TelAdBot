@@ -22,8 +22,8 @@ BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN_ID = os.environ.get("ADMIN_ID")
 PAYMENT_CARD_NUMBER = os.environ.get("PAYMENT_CARD_NUMBER")
 
-CHANNEL_USERNAME = f"@{os.environ.get('CHANNEL_USERNAME')}"
-CHANNEL_LINK = f"https://t.me/{os.environ.get('CHANNEL_LINK')}"
+CHANNEL_ID = f"@{os.environ.get('CHANNEL_USERNAME')}"
+CHANNEL_LINK = f"https://t.me/{os.environ.get('CHANNEL_USERNAME')}"
 
 # --- Define Conversation States ---
 class ConversationState(Enum):
@@ -72,12 +72,12 @@ async def show_ad_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ConversationState.AWAITING_AD_TYPE
 
-# --- Command and Conversation Handlers ---
+# --- Main Conversation Handlers ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     try:
-        chat_member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user.id)
+        chat_member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user.id)
         if chat_member.status not in ["member", "administrator", "creator"]:
             raise Exception("User not in channel")
             
@@ -101,7 +101,7 @@ async def check_membership_in_convo(update: Update, context: ContextTypes.DEFAUL
     user_id = query.from_user.id
 
     try:
-        chat_member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        chat_member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         if chat_member.status in ["member", "administrator", "creator"]:
             return await show_rules(update, context)
         else:
@@ -114,7 +114,6 @@ async def check_membership_in_convo(update: Update, context: ContextTypes.DEFAUL
         return ConversationState.AWAITING_RULES_AGREEMENT
 
 async def ad_type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the user selecting an ad type from the menu."""
     query = update.callback_query
     await query.answer()
 
@@ -123,15 +122,25 @@ async def ad_type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ad_type_text = "عادی" if query.data == "ad_type_normal" else "ویژه"
     
     await query.edit_message_text(text=f"شما آگهی «{ad_type_text}» را انتخاب کردید.\n\n"
-                                       "اکنون لطفا **متن و/یا تصویر آگهی** خود را ارسال کنید.")
+                                       "اکنون لطفا متن و/یا تصویر آگهی خود را ارسال کنید.")
                                        
     return ConversationState.AWAITING_AD_CONTENT
 
 async def receive_ad_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['ad_message_id'] = update.message.message_id
-    context.user_data['ad_chat_id'] = update.message.chat_id
+    """Receives ad content and stores it for later approval."""
+    message = update.message
+    # Use the message ID as a unique key to store this ad's data
+    ad_id = message.message_id
+    context.user_data['ad_id'] = ad_id
 
-    price = "250,000 تومان" if context.user_data['ad_type'] == 'ad_type_normal' else "250,000 تومان"
+    if message.text:
+        context.bot_data[ad_id] = {'type': 'text', 'content': message.text}
+    elif message.photo:
+        # Store the file_id of the largest photo and its caption
+        photo_file_id = message.photo[-1].file_id
+        context.bot_data[ad_id] = {'type': 'photo', 'file_id': photo_file_id, 'content': message.caption}
+
+    price = "250,000 تومان"
     
     payment_text = f"""
 آگهی شما دریافت شد. ✅
@@ -149,19 +158,21 @@ async def receive_ad_content(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationState.AWAITING_PAYMENT_RECEIPT
 
 async def receive_payment_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Forwards everything to the admin with an 'Approve' button."""
     user = update.effective_user
-    
+    ad_id = context.user_data.get('ad_id')
+
+    if not ad_id:
+        await update.message.reply_text("خطایی رخ داد. لطفا مجددا با /start تلاش کنید.")
+        return ConversationHandler.END
+
     await update.message.reply_text(
         " رسید شما دریافت شد. آگهی شما جهت بررسی و انتشار برای ادمین ارسال گردید.\n"
         "از صبر و شکیبایی شما متشکریم. 🙏"
     )
+
     ad_type_raw = context.user_data.get('ad_type')
-    if ad_type_raw == 'ad_type_normal':
-        ad_type_display = 'عادی'
-    elif ad_type_raw == 'ad_type_premium':
-        ad_type_display = 'ویژه (پین شده)'
-    else:
-        ad_type_display = 'نامشخص'
+    ad_type_display = 'عادی' if ad_type_raw == 'ad_type_normal' else 'ویژه (پین شده)'
         
     admin_caption = f"""
 #آگهی_جدید
@@ -169,28 +180,84 @@ async def receive_payment_receipt(update: Update, context: ContextTypes.DEFAULT_
 کاربر: {user.full_name} (@{user.username or 'N/A'})
 ID: {user.id}
 نوع آگهی: {ad_type_display}
-
---- متن آگهی 👇 ---
     """
     
+    # --- Create the Approval Button ---
+    keyboard = [[InlineKeyboardButton("✅ Approve & Post Ad", callback_data=f"accept_{ad_id}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # --- Send to Admin ---
+    # 1. Send the user and ad info
     await context.bot.send_message(chat_id=ADMIN_ID, text=admin_caption)
-    
-    await context.bot.forward_message(
-        chat_id=ADMIN_ID,
-        from_chat_id=context.user_data['ad_chat_id'],
-        message_id=context.user_data['ad_message_id']
-    )
-    
+
+    # 2. Send the ad content for review (using the stored data)
+    ad_data = context.bot_data.get(ad_id, {})
+    if ad_data.get('type') == 'text':
+        await context.bot.send_message(chat_id=ADMIN_ID, text=f"--- متن آگهی 👇 ---\n{ad_data.get('content')}")
+    elif ad_data.get('type') == 'photo':
+        await context.bot.send_photo(chat_id=ADMIN_ID, photo=ad_data.get('file_id'), caption=f"--- متن آگهی 👇 ---\n{ad_data.get('content', '')}")
+
+    # 3. Send the payment receipt
     await context.bot.send_message(chat_id=ADMIN_ID, text="--- رسید پرداخت 👇 ---")
     await context.bot.forward_message(
         chat_id=ADMIN_ID,
         from_chat_id=update.message.chat_id,
         message_id=update.message.message_id
     )
+
+    # 4. Send the final message with the approval button
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text="لطفا آگهی را بررسی و در صورت تایید، آن را منتشر کنید.",
+        reply_markup=reply_markup
+    )
     
     context.user_data.clear()
     return ConversationHandler.END
 
+async def approve_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the admin clicking the 'Approve' button."""
+    query = update.callback_query
+    await query.answer()
+
+    # Extract the ad_id from the callback_data
+    try:
+        ad_id = int(query.data.split("_")[1])
+    except (IndexError, ValueError):
+        await query.edit_message_text("خطا: ID آگهی نامعتبر است.")
+        return
+
+    # Retrieve the ad data from bot_data
+    ad_data = context.bot_data.get(ad_id)
+
+    if not ad_data:
+        await query.edit_message_text("❌ آگهی منقضی شده یا یافت نشد.")
+        return
+
+    # --- Post to Channel ---
+    signature = f"\n---------\n{CHANNEL_ID}"
+    
+    try:
+        if ad_data.get('type') == 'text':
+            new_text = ad_data.get('content', '') + signature
+            await context.bot.send_message(chat_id=CHANNEL_ID, text=new_text)
+        
+        elif ad_data.get('type') == 'photo':
+            original_caption = ad_data.get('content', '') or ''
+            new_caption = original_caption + signature
+            await context.bot.send_photo(chat_id=CHANNEL_ID, photo=ad_data.get('file_id'), caption=new_caption)
+        
+        # --- Confirm Approval ---
+        await query.edit_message_text("✅ آگهی با موفقیت در چنل منتشر شد.")
+    
+        del context.bot_data[ad_id]
+
+    except Exception as e:
+        print(f"Error posting to channel: {e}")
+        await query.edit_message_text(f"❌ خطا در انتشار آگهی: {e}")
+
+
+# --- Utility Handlers ---
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancels and ends the conversation."""
     await update.message.reply_text(
@@ -200,18 +267,18 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Log the error and send a message to the user."""
+    """Log the error."""
     print(f"Update {update} caused error {context.error}")
 
 if __name__ == '__main__':
     print("Starting the bot ...")
-    if not all([TOKEN, ADMIN_ID, PAYMENT_CARD_NUMBER]):
-        print("Please set up all required Environment Variables (TOKEN, ADMIN_ID, PAYMENT_CARD_NUMBER).")
+    if not all([TOKEN, ADMIN_ID, PAYMENT_CARD_NUMBER, os.environ.get('CHANNEL_USERNAME')]):
+        print("Please set up all required Environment Variables.")
         exit()
 
     app = Application.builder().token(TOKEN).build()
 
-    # --- Conversation Handler Setup ---
+    # --- Conversation Handler for Users ---
     ad_submission_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_command)],
         states={
@@ -233,6 +300,7 @@ if __name__ == '__main__':
     )
 
     app.add_handler(ad_submission_handler)
+    app.add_handler(CallbackQueryHandler(approve_ad, pattern=r'^accept_'))
     
     app.add_error_handler(error_handler)
     
