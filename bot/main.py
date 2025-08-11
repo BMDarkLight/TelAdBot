@@ -51,7 +51,6 @@ async def show_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationState.AWAITING_RULES_AGREEMENT
 
 async def show_ad_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays the ad pricing menu."""
     query = update.callback_query
     await query.answer()
 
@@ -123,7 +122,6 @@ async def ad_type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationState.AWAITING_AD_CONTENT
 
 async def receive_ad_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives ad content and stores it for later approval."""
     message = update.message
     ad_id = message.message_id
     context.user_data['ad_id'] = ad_id
@@ -156,7 +154,6 @@ async def receive_ad_content(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationState.AWAITING_PAYMENT_RECEIPT
 
 async def receive_payment_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Forwards everything to the admin with an 'Approve' button."""
     user = update.effective_user
     ad_id = context.user_data.get('ad_id')
 
@@ -180,7 +177,7 @@ ID: {user.id}
 نوع آگهی: {ad_type_display}
     """
     
-    keyboard = [[InlineKeyboardButton("✅ Approve & Post Ad", callback_data=f"accept_{ad_id}")]]
+    keyboard = [[InlineKeyboardButton("✅ تایید و پست تبلیغ", callback_data=f"accept_{ad_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await context.bot.send_message(chat_id=ADMIN_ID, text=admin_caption)
@@ -208,7 +205,6 @@ ID: {user.id}
     return ConversationHandler.END
 
 async def approve_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the admin clicking the 'Approve' button."""
     query = update.callback_query
     await query.answer()
 
@@ -224,13 +220,13 @@ async def approve_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ آگهی منقضی شده یا یافت نشد.")
         return
 
+    user_id = ad_data.get('user_id')
     user_username = ad_data.get('user_username')
     
     if user_username:
         user_identifier = f"@{user_username}"
     else:
-        user_id = ad_data.get('user_id', 'N/A')
-        user_identifier = f"ID: {user_id}"
+        user_identifier = f"{user_id}"
 
     signature = f"\n\n🆔 {user_identifier}\n———————————————————\n{CHANNEL_ID}"
     
@@ -244,7 +240,16 @@ async def approve_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_caption = original_caption + signature
             await context.bot.send_photo(chat_id=CHANNEL_ID, photo=ad_data.get('file_id'), caption=new_caption)
         
-        await query.edit_message_text("✅ آگهی با موفقیت در چنل منتشر شد.")
+        if user_id:
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text="آگهی شما با موفقیت در چنل منتشر شد. ✅"
+                )
+            except Exception as e:
+                print(f"Could not notify user {user_id}. They may have blocked the bot. Error: {e}")
+        
+        await query.edit_message_text("✅ آگهی با موفقیت در چنل منتشر شد و به کاربر اطلاع داده شد.")
         
         del context.bot_data[ad_id]
 
@@ -252,8 +257,8 @@ async def approve_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error posting to channel: {e}")
         await query.edit_message_text(f"❌ خطا در انتشار آگهی: {e}")
 
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancels and ends the conversation."""
     await update.message.reply_text(
         "عملیات ثبت آگهی لغو شد. برای شروع مجدد /start را بزنید."
     )
