@@ -34,7 +34,6 @@ class ConversationState(Enum):
 
 # --- Helper Functions ---
 async def show_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays the rules and an 'I Agree' button."""
     rules_text = """
 قوانین ثبت آگهی:
 ۱- از ثبت آگهی‌های تکراری خودداری کنید.
@@ -62,22 +61,19 @@ async def show_ad_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     menu_text = """
 لطفا نوع آگهی خود را انتخاب کنید:
 
-- **آگهی عادی**: ۲۵۰,۰۰۰ تومان
+- آگهی عادی: ۲۵۰,۰۰۰ تومان
     """
     keyboard = [
-        [InlineKeyboardButton("آگهی عادی (100,000 تومان)", callback_data="ad_type_normal")],
+        [InlineKeyboardButton("آگهی عادی (250,000 تومان)", callback_data="ad_type_normal")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(text=menu_text, reply_markup=reply_markup, parse_mode='Markdown')
+    await query.edit_message_text(text=menu_text, reply_markup=reply_markup)
+    
     return ConversationState.AWAITING_AD_TYPE
 
 # --- Command and Conversation Handlers ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Starts the conversation. Checks for channel membership first.
-    This function is the ENTRY POINT for our ConversationHandler.
-    """
     user = update.effective_user
     
     try:
@@ -89,7 +85,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_rules(update, context)
 
     except Exception:
-        # If user is NOT a member, ask them to join.
         keyboard = [
             [InlineKeyboardButton("عضویت در چنل", url=CHANNEL_LINK)],
             [InlineKeyboardButton("✅ عضو شدم، بررسی کن", callback_data="check_membership_in_convo")]
@@ -102,20 +97,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationState.AWAITING_RULES_AGREEMENT
 
 async def check_membership_in_convo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Callback function to re-check membership and continue to rules if successful.
-    """
     query = update.callback_query
     user_id = query.from_user.id
 
     try:
         chat_member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
         if chat_member.status in ["member", "administrator", "creator"]:
-            # Membership confirmed, proceed to showing rules
             return await show_rules(update, context)
         else:
             await query.answer("هنوز عضو چنل نیستید. لطفا عضو شوید و دوباره تلاش کنید.", show_alert=True)
-            return ConversationState.AWAITING_RULES_AGREEMENT # Stay in the same state
+            return ConversationState.AWAITING_RULES_AGREEMENT
             
     except Exception as e:
         print(e)
@@ -127,7 +118,6 @@ async def ad_type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    # Store the chosen ad type in user_data for later use.
     context.user_data['ad_type'] = query.data
     
     ad_type_text = "عادی" if query.data == "ad_type_normal" else "ویژه"
@@ -138,50 +128,52 @@ async def ad_type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationState.AWAITING_AD_CONTENT
 
 async def receive_ad_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the ad content (text/photo) and asks for payment."""
-    # Store the message ID and chat ID so we can forward it later.
     context.user_data['ad_message_id'] = update.message.message_id
     context.user_data['ad_chat_id'] = update.message.chat_id
 
-    price = "100,000 تومان" if context.user_data['ad_type'] == 'ad_type_normal' else "250,000 تومان"
+    price = "250,000 تومان" if context.user_data['ad_type'] == 'ad_type_normal' else "250,000 تومان"
     
     payment_text = f"""
 آگهی شما دریافت شد. ✅
 
-مبلغ قابل پرداخت: **{price}**
+مبلغ قابل پرداخت: {price}
 
-لطفا هزینه را به شماره کارت زیر واریز کرده و سپس **تصویر رسید پرداخت** را ارسال نمایید.
+لطفا هزینه را به شماره کارت زیر واریز کرده و سپس تصویر رسید پرداخت را ارسال نمایید.
 
 💳 شماره کارت:
-`{PAYMENT_CARD_NUMBER}`
+{PAYMENT_CARD_NUMBER}
     """
-    await update.message.reply_text(text=payment_text, parse_mode='Markdown')
+    
+    await update.message.reply_text(text=payment_text)
+    
     return ConversationState.AWAITING_PAYMENT_RECEIPT
 
 async def receive_payment_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Receives the payment receipt, forwards everything to the admin,
-    and ends the conversation.
-    """
     user = update.effective_user
     
     await update.message.reply_text(
         " رسید شما دریافت شد. آگهی شما جهت بررسی و انتشار برای ادمین ارسال گردید.\n"
         "از صبر و شکیبایی شما متشکریم. 🙏"
     )
-
-    # --- Forward to Admin ---
+    ad_type_raw = context.user_data.get('ad_type')
+    if ad_type_raw == 'ad_type_normal':
+        ad_type_display = 'عادی'
+    elif ad_type_raw == 'ad_type_premium':
+        ad_type_display = 'ویژه (پین شده)'
+    else:
+        ad_type_display = 'نامشخص'
+        
     admin_caption = f"""
 #آگهی_جدید
 
 کاربر: {user.full_name} (@{user.username or 'N/A'})
-ID: `{user.id}`
-نوع آگهی: {context.user_data.get('ad_type', 'N/A')}
+ID: {user.id}
+نوع آگهی: {ad_type_display}
 
 --- متن آگهی 👇 ---
     """
     
-    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_caption, parse_mode='Markdown')
+    await context.bot.send_message(chat_id=ADMIN_ID, text=admin_caption)
     
     await context.bot.forward_message(
         chat_id=ADMIN_ID,
