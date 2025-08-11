@@ -34,23 +34,6 @@ The bot's configuration is managed through an `.env` file.
 2.  Copy the contents of `.env.example` into your new `.env` file.
 3.  Fill in the values for each variable.
 
-```ini
-# Your Telegram Bot Token from @BotFather
-BOT_TOKEN="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
-
-# Your bot's username without the @
-BOT_USERNAME="YourBotUsername"
-
-# The username of the channel to post ads to (without the @)
-CHANNEL_USERNAME="YourChannelUsername"
-
-# Your personal Telegram User ID to receive admin notifications
-ADMIN_ID="123456789"
-
-# The payment information you want to show to users
-PAYMENT_CARD_NUMBER="6037-9977-1234-5678"
-```
-
 ### 3. Install Dependencies
 
 Install the required Python libraries using pip:
